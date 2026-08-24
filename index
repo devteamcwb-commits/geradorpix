@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Gerador de QR Code PIX</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --roxo:#8b0897; --roxo2:#5e0f9e; --verde:#10b981;
+    --tinta:#1f2937; --cinza:#6b7280; --linha:#e5e7eb; --fundo:#f7f5fa;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    font-family:"Segoe UI",Arial,Helvetica,sans-serif;
+    background:var(--fundo); color:var(--tinta);
+    margin:0; padding:32px 16px; display:flex; justify-content:center;
+  }
+  .card{
+    background:#fff; border:1px solid var(--linha); border-radius:12px;
+    max-width:920px; width:100%; padding:28px 32px; box-shadow:0 1px 3px rgba(0,0,0,.04);
+  }
+  h1{ font-size:18px; color:var(--roxo2); margin:0 0 4px; }
+  p.sub{ font-size:12.5px; color:var(--cinza); margin:0 0 24px; }
+
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  @media(max-width:680px){ .grid{ grid-template-columns:1fr; } }
+
+  label{ display:block; font-size:11px; font-weight:700; text-transform:uppercase;
+    letter-spacing:.4px; color:var(--roxo2); margin-bottom:4px; }
+  .field{ margin-bottom:16px; }
+  input{
+    width:100%; padding:9px 10px; border:1px solid var(--linha); border-radius:7px;
+    font-size:13px; font-family:inherit; color:var(--tinta);
+  }
+  input:focus{ outline:2px solid var(--verde); outline-offset:1px; border-color:var(--verde); }
+
+  .out{
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+    background:var(--fundo); border:1px dashed var(--roxo); border-radius:10px; padding:20px;
+  }
+  #qrcode{ margin:6px 0 14px; }
+  #qrcode img{ border-radius:6px; }
+  .valor-out{ font-size:15px; font-weight:800; color:var(--roxo); margin-bottom:2px; }
+  .copybox{
+    width:100%; margin-top:12px;
+  }
+  textarea{
+    width:100%; height:64px; font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:10px; color:var(--cinza); border:1px solid var(--linha); border-radius:6px;
+    padding:8px; resize:none; background:#fff;
+  }
+  button{
+    margin-top:8px; background:var(--roxo); color:#fff; border:none; border-radius:6px;
+    padding:8px 14px; font-size:12px; font-weight:700; cursor:pointer;
+  }
+  button:hover{ background:var(--roxo2); }
+  .err{ color:#b91c1c; font-size:11.5px; margin-top:6px; min-height:14px; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>Gerador de QR Code PIX</h1>
+  <p class="sub">Preencha os dados abaixo — o QR Code é recalculado automaticamente a cada alteração, inclusive no valor.</p>
+
+  <div class="grid">
+    <div>
+      <div class="field">
+        <label for="chave">Chave PIX (CNPJ / CPF / e-mail / telefone / aleatória)</label>
+        <input id="chave" value="11098692000179">
+      </div>
+      <div class="field">
+        <label for="nome">Nome do recebedor (máx. 25 caracteres)</label>
+        <input id="nome" maxlength="25" value="PREMIUM COMPUTADORES">
+      </div>
+      <div class="field">
+        <label for="cidade">Cidade do recebedor (máx. 15 caracteres)</label>
+        <input id="cidade" maxlength="15" value="SORRISO">
+      </div>
+      <div class="field">
+        <label for="valor">Valor (R$) — este é o "campo do pagamento"</label>
+        <input id="valor" type="number" step="0.01" min="0" value="300.00">
+      </div>
+      <div class="field">
+        <label for="txid">Identificador (txid,Ordem Serviço, opcional, máx. 25 caracteres)</label>
+        <input id="txid" maxlength="25" value="OS20260824">
+      </div>
+      <div class="err" id="err"></div>
+    </div>
+
+    <div class="out">
+      <div class="valor-out" id="valorOut">R$ 300,00</div>
+      <div id="qrcode"></div>
+      <div class="copybox">
+        <label>Copia e Cola PIX</label>
+        <textarea id="payloadOut" readonly></textarea>
+        <button onclick="copyPayload()">Copiar código</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------------------------------------------------------
+   GERADOR DE PAYLOAD PIX (padrão BR Code / EMV)
+   Pode ser copiado e reutilizado em qualquer outra página.
+--------------------------------------------------------- */
+
+// Monta um campo no formato EMV: ID + tamanho(2 dígitos) + valor
+function emv(id, value) {
+  const len = String(value.length).padStart(2, "0");
+  return `${id}${len}${value}`;
+}
+
+// CRC16-CCITT (poly 0x1021, valor inicial 0xFFFF) — exigido pelo padrão PIX
+function crc16(payload) {
+  let result = 0xFFFF;
+  for (let i = 0; i < payload.length; i++) {
+    result ^= payload.charCodeAt(i) << 8;
+    for (let b = 0; b < 8; b++) {
+      result = (result & 0x8000) ? ((result << 1) ^ 0x1021) & 0xFFFF : (result << 1) & 0xFFFF;
+    }
+  }
+  return result.toString(16).toUpperCase().padStart(4, "0");
+}
+
+// Remove acentos e caracteres não suportados pelo padrão (apenas ASCII)
+function limpar(txt) {
+  return txt
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9 ]/g, "")
+    .toUpperCase();
+}
+
+// Monta o payload PIX completo a partir dos dados informados
+function buildPixPayload({ chave, nome, cidade, valor, txid }) {
+  chave = chave.replace(/\D/g, "").length === chave.replace(/[^\d]/g, "").length && /^\d+$/.test(chave.replace(/[.\-\/]/g, ""))
+    ? chave.replace(/[.\-\/]/g, "")  // CNPJ/CPF: mantém só números
+    : chave.trim();                  // e-mail, telefone ou chave aleatória: mantém como está
+
+  nome = limpar(nome).slice(0, 25) || "RECEBEDOR";
+  cidade = limpar(cidade).slice(0, 15) || "BRASIL";
+  txid = (txid || "***").replace(/[^a-zA-Z0-9]/g, "").slice(0, 25) || "***";
+
+  let payload = "";
+  payload += emv("00", "01");              // Payload Format Indicator
+  payload += emv("01", "12");              // 12 = QR estático/reutilizável
+
+  const mai = emv("00", "br.gov.bcb.pix") + emv("01", chave);
+  payload += emv("26", mai);               // Bloco da chave PIX
+
+  payload += emv("52", "0000");            // Categoria do comerciante
+  payload += emv("53", "986");             // Moeda: Real (986)
+
+  const valorNum = parseFloat(valor);
+  if (!isNaN(valorNum) && valorNum > 0) {
+    payload += emv("54", valorNum.toFixed(2));  // Valor (opcional)
+  }
+
+  payload += emv("58", "BR");              // País
+  payload += emv("59", nome);              // Nome do recebedor
+  payload += emv("60", cidade);            // Cidade do recebedor
+  payload += emv("62", emv("05", txid));   // Identificador da transação
+
+  payload += "6304";                       // Marcador do CRC (calculado a seguir)
+  payload += crc16(payload);
+
+  return payload;
+}
+
+/* ---------------------------------------------------------
+   INTEGRAÇÃO COM A PÁGINA (lê os campos e atualiza o QR Code)
+--------------------------------------------------------- */
+let qr = null;
+
+function atualizarQRCode() {
+  const chave  = document.getElementById("chave").value;
+  const nome   = document.getElementById("nome").value;
+  const cidade = document.getElementById("cidade").value;
+  const valor  = document.getElementById("valor").value; // <- campo do pagamento
+  const txid   = document.getElementById("txid").value;
+
+  const errEl = document.getElementById("err");
+  errEl.textContent = "";
+
+  if (!chave.trim()) { errEl.textContent = "Informe a chave PIX."; return; }
+
+  let payload;
+  try {
+    payload = buildPixPayload({ chave, nome, cidade, valor, txid });
+  } catch (e) {
+    errEl.textContent = "Erro ao gerar o código PIX.";
+    return;
+  }
+
+  document.getElementById("payloadOut").value = payload;
+
+  const valorNum = parseFloat(valor);
+  document.getElementById("valorOut").textContent = !isNaN(valorNum) && valorNum > 0
+    ? "R$ " + valorNum.toFixed(2).replace(".", ",")
+    : "Valor não definido";
+
+  const qrDiv = document.getElementById("qrcode");
+  qrDiv.innerHTML = "";
+  qr = new QRCode(qrDiv, {
+    text: payload,
+    width: 180,
+    height: 180,
+    colorDark: "#1f2937",
+    colorLight: "#ffffff",
+    correctLevel: QRCode.CorrectLevel.M
+  });
+}
+
+function copyPayload() {
+  const ta = document.getElementById("payloadOut");
+  ta.select();
+  document.execCommand("copy");
+}
+
+// Atualiza automaticamente sempre que qualquer campo mudar
+["chave", "nome", "cidade", "valor", "txid"].forEach(id => {
+  document.getElementById(id).addEventListener("input", atualizarQRCode);
+});
+
+atualizarQRCode(); // gera o QR Code inicial ao carregar a página
+</script>
+
+</body>
+</html>
